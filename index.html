@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MISSION CONTROL — Telemetry</title>
+<style>
+/* ============================================================
+   ZÁKLADNÉ PREMENNÉ A RESET (base variables & reset)
+   ============================================================ */
+:root{
+  --bg:        #0a0e14;   /* hlavné pozadie */
+  --panel:     rgba(16,22,32,0.72);
+  --panel-bd:  rgba(64,196,212,0.18);
+  --grid-line: rgba(80,200,220,0.06);
+  --accent:    #36e0d4;   /* cyan/teal akcent */
+  --accent-dim:#1c7c78;
+  --text:      #cfe6ea;
+  --text-dim:  #6a818a;
+  --green:     #46e07a;
+  --amber:     #ffb43a;
+  --red:       #ff4d4d;
+  --mono:      "SF Mono","JetBrains Mono","Consolas","Roboto Mono",monospace;
+  --sans:      "Inter","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--sans);
+  overflow:hidden;
+  user-select:none;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* Jemná mriežková textúra na pozadí (subtle grid texture) */
+body::before{
+  content:"";
+  position:fixed; inset:0; z-index:0; pointer-events:none;
+  background-image:
+    linear-gradient(var(--grid-line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
+  background-size:42px 42px;
+  mask-image:radial-gradient(ellipse at center,#000 55%,transparent 100%);
+}
+
+/* ============================================================
+   ROZLOŽENIE / GRID (layout)
+   ============================================================ */
+#app{
+  position:relative; z-index:1;
+  height:100vh; width:100vw;
+  display:grid;
+  grid-template-rows:auto 1fr;
+  gap:10px; padding:10px;
+}
+
+/* --- horný panel (top bar) --- */
+#topbar{
+  display:grid;
+  grid-template-columns:1.4fr 1fr 1.2fr;
+  align-items:center;
+  gap:14px;
+  padding:10px 18px;
+  background:linear-gradient(180deg,rgba(20,28,40,0.85),rgba(12,17,25,0.75));
+  border:1px solid var(--panel-bd);
+  border-radius:8px;
+  backdrop-filter:blur(6px);
+}
+.tb-left{display:flex;align-items:center;gap:16px}
+.mission-badge{
+  display:flex;flex-direction:column;line-height:1.05;
+}
+.mission-badge .mtitle{font-size:18px;font-weight:700;letter-spacing:3px}
+.mission-badge .msub{font-size:10px;color:var(--text-dim);letter-spacing:2px}
+
+.phase-pill{
+  font-family:var(--mono);
+  font-size:13px; font-weight:700; letter-spacing:2px;
+  padding:7px 16px; border-radius:20px;
+  border:1px solid var(--accent);
+  color:var(--accent);
+  background:rgba(54,224,212,0.08);
+  box-shadow:0 0 14px rgba(54,224,212,0.25),inset 0 0 10px rgba(54,224,212,0.08);
+  white-space:nowrap;
+  transition:all .4s ease;
+}
+
+.tb-center{text-align:center}
+.clock-label{font-size:10px;letter-spacing:3px;color:var(--text-dim)}
+.clock{
+  font-family:var(--mono);
+  font-size:44px; font-weight:700; letter-spacing:2px;
+  line-height:1; color:#eafcff;
+  text-shadow:0 0 18px rgba(54,224,212,0.35);
+}
+
+.tb-right{display:flex;align-items:center;justify-content:flex-end;gap:22px}
+.utc-box{text-align:right}
+.utc-box .ulabel{font-size:10px;letter-spacing:2px;color:var(--text-dim)}
+.utc-box .uval{font-family:var(--mono);font-size:16px;color:var(--text)}
+.status-chip{
+  display:flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:2px;
+  padding:8px 16px;border-radius:6px;
+  border:1px solid var(--green);color:var(--green);
+  background:rgba(70,224,122,0.08);
+}
+.status-chip .dot{width:9px;height:9px;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+
+/* --- hlavná mriežka panelov (main panel grid) --- */
+#grid{
+  display:grid;
+  grid-template-columns:repeat(12,1fr);
+  grid-template-rows:repeat(2,1fr);
+  gap:10px;
+  min-height:0;
+}
+.panel{
+  position:relative;
+  background:var(--panel);
+  border:1px solid var(--panel-bd);
+  border-radius:8px;
+  backdrop-filter:blur(4px);
+  overflow:hidden;
+  display:flex;flex-direction:column;
+  min-height:0;min-width:0;
+}
+.panel-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px 6px;
+  font-size:10px;letter-spacing:2px;color:var(--text-dim);
+  border-bottom:1px solid rgba(80,200,220,0.08);
+}
+.panel-head .ph-title{display:flex;align-items:center;gap:7px}
+.panel-head .ph-title::before{
+  content:"";width:6px;height:6px;border-radius:1px;
+  background:var(--accent);box-shadow:0 0 8px var(--accent);
+}
+.panel-body{position:relative;flex:1;min-height:0;padding:6px}
+.panel canvas{display:block;width:100%;height:100%}
+
+/* Rozmiestnenie panelov v Stage 1 (panel placement) */
+.p-alt {grid-column:1 / 7;  grid-row:1 / 2;}
+.p-vel {grid-column:7 / 13; grid-row:1 / 2;}
+.p-info{grid-column:1 / 13; grid-row:2 / 3;}
+
+/* Čítané hodnoty v rohu grafu (readout overlay) */
+.readout{
+  position:absolute;top:8px;right:14px;text-align:right;
+  font-family:var(--mono);pointer-events:none;
+}
+.readout .rv{font-size:30px;font-weight:700;color:#eafcff;text-shadow:0 0 14px rgba(54,224,212,0.4);line-height:1}
+.readout .ru{font-size:12px;color:var(--text-dim);letter-spacing:1px}
+
+/* Info panel – placeholder pre ďalšie stage (info strip) */
+.info-strip{display:flex;gap:30px;flex-wrap:wrap;padding:14px 18px;align-items:center}
+.info-cell{display:flex;flex-direction:column;gap:2px;min-width:110px}
+.info-cell .ic-label{font-size:10px;letter-spacing:2px;color:var(--text-dim)}
+.info-cell .ic-val{font-family:var(--mono);font-size:22px;font-weight:700;color:#eafcff}
+.info-cell .ic-unit{font-size:11px;color:var(--text-dim)}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <header id="topbar">
+    <div class="tb-left">
+      <div class="mission-badge">
+        <span class="mtitle">ARTEMIS&nbsp;//&nbsp;ASCENT</span>
+        <span class="msub">LV-9 HEAVY · PAD 39C · FLIGHT TELEMETRY</span>
+      </div>
+      <div class="phase-pill" id="phasePill">PRELAUNCH</div>
+    </div>
+    <div class="tb-center">
+      <div class="clock-label">MISSION ELAPSED TIME</div>
+      <div class="clock" id="missionClock">T-00:01:00</div>
+    </div>
+    <div class="tb-right">
+      <div class="utc-box">
+        <div class="ulabel">UTC</div>
+        <div class="uval" id="utcClock">00:00:00</div>
+      </div>
+      <div class="status-chip" id="statusChip">
+        <span class="dot"></span><span id="statusText">NOMINAL</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== PANEL GRID ===================== -->
+  <main id="grid">
+
+    <section class="panel p-alt">
+      <div class="panel-head">
+        <span class="ph-title">ALTITUDE</span>
+        <span>LAST 120 s</span>
+      </div>
+      <div class="panel-body">
+        <canvas id="altChart"></canvas>
+        <div class="readout"><div class="rv" id="altRead">0.0</div><div class="ru">km MSL</div></div>
+      </div>
+    </section>
+
+    <section class="panel p-vel">
+      <div class="panel-head">
+        <span class="ph-title">VELOCITY</span>
+        <span>INERTIAL</span>
+      </div>
+      <div class="panel-body">
+        <canvas id="velChart"></canvas>
+        <div class="readout"><div class="rv" id="velRead">0</div><div class="ru">m/s</div></div>
+      </div>
+    </section>
+
+    <section class="panel p-info">
+      <div class="panel-head">
+        <span class="ph-title">FLIGHT SUMMARY</span>
+        <span id="phaseSub">AWAITING IGNITION SEQUENCE</span>
+      </div>
+      <div class="panel-body">
+        <div class="info-strip">
+          <div class="info-cell"><span class="ic-label">ALTITUDE</span><span class="ic-val" id="iAlt">0.0</span><span class="ic-unit">km</span></div>
+          <div class="info-cell"><span class="ic-label">VELOCITY</span><span class="ic-val" id="iVel">0</span><span class="ic-unit">m/s</span></div>
+          <div class="info-cell"><span class="ic-label">ACCELERATION</span><span class="ic-val" id="iAcc">0.00</span><span class="ic-unit">g</span></div>
+          <div class="info-cell"><span class="ic-label">DOWNRANGE</span><span class="ic-val" id="iDr">0.0</span><span class="ic-unit">km</span></div>
+          <div class="info-cell"><span class="ic-label">DYN PRESSURE</span><span class="ic-val" id="iQ">0.0</span><span class="ic-unit">kPa</span></div>
+          <div class="info-cell"><span class="ic-label">FUEL S1</span><span class="ic-val" id="iFuel">100</span><span class="ic-unit">%</span></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* ================================================================
+   MISSION CONTROL — STAGE 1
+   Sekcie: (1) DATA ENGINE / STATE MACHINE
+           (2) CHART COMPONENTS (reusable strip chart)
+           (3) PANELS / RENDER
+           (4) UI / LOOP
+   Komentáre v slovenčine, identifikátory v angličtine.
+   ================================================================ */
+
+/* ================================================================
+   (1) DATA ENGINE / STATE MACHINE
+   ================================================================ */
+
+/* Pomocné matematické funkcie (math helpers) */
+const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
+const lerp  = (a,b,t)=>a+(b-a)*t;
+/* Nízkopásmový filter – plynulý prechod k cieľu (low-pass smoothing) */
+const approach = (cur,target,rate,dt)=>cur+(target-cur)*(1-Math.exp(-rate*dt));
+/* Gaussovský šum (Box-Muller) pre jemné kolísanie */
+function gauss(sigma=1){
+  let u=0,v=0;
+  while(u===0)u=Math.random();
+  while(v===0)v=Math.random();
+  return sigma*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+/* --- Definícia fáz misie (mission phases) ---
+   t označuje čas v sekundách od LIFTOFF (T+). PRELAUNCH má záporný čas. */
+const PHASES = [
+  {key:'PRELAUNCH',       sub:'AWAITING IGNITION SEQUENCE'},
+  {key:'IGNITION',        sub:'ENGINE START · THRUST BUILDUP'},
+  {key:'LIFTOFF',         sub:'VEHICLE HAS CLEARED THE TOWER'},
+  {key:'MAX-Q',           sub:'MAXIMUM DYNAMIC PRESSURE'},
+  {key:'STAGE SEP',       sub:'STAGE 1 SEPARATION · MECO'},
+  {key:'ORBIT INSERTION', sub:'SECOND STAGE BURN · SECO PENDING'},
+  {key:'ORBIT',           sub:'NOMINAL ORBIT · STEADY STATE'},
+];
+
+/* Globálny stav simulácie (simulation state) */
+const sim = {
+  t: -60,            // čas misie v sekundách (negatívny = T-mínus)
+  phase: 'PRELAUNCH',
+  speed: 1,          // násobič rýchlosti simulácie
+  running: true,
+
+  // primárne kanály (primary channels) – aktuálne hodnoty
+  altitude: 0,       // km
+  velocity: 0,       // m/s
+  accel: 0,          // m/s^2
+  downrange: 0,      // km
+  dynPressure: 0,    // kPa
+  fuelS1: 100,       // %
+  fuelS2: 100,       // %
+
+  // ciele pre vyhladzovanie (smoothing targets)
+  _tgtVel: 0,
+};
+
+/* Určenie fázy podľa času misie (derive phase from mission time).
+   Toto je zjednodušený stroj pre Stage 1; plný stav príde v Stage 2. */
+function derivePhase(t){
+  if(t < 0)    return 'PRELAUNCH';
+  if(t < 3)    return 'IGNITION';
+  if(t < 60)   return 'LIFTOFF';
+  if(t < 80)   return 'MAX-Q';
+  if(t < 150)  return 'STAGE SEP';
+  if(t < 480)  return 'ORBIT INSERTION';
+  return 'ORBIT';
+}
+
+/* Cieľová rýchlosť podľa času – hladká ascentná krivka (target velocity curve).
+   Modelujeme zrýchľujúci sa nábeh k orbitálnej rýchlosti ~7800 m/s. */
+function targetVelocity(t){
+  if(t <= 0) return 0;
+  // sigmoidný nábeh: pomalý štart, strmý stred, vyrovnanie pri orbite
+  const vOrbit = 7800;
+  const k = 0.011;          // strmosť
+  const mid = 240;          // stred nábehu (s)
+  const s = 1/(1+Math.exp(-k*(t-mid)));
+  const s0 = 1/(1+Math.exp(-k*(0-mid)));
+  return vOrbit*(s-s0)/(1-s0);
+}
+
+/* Hlavný krok integrácie telemetrie (advance telemetry one dt). */
+function stepSim(dt){
+  if(!sim.running) return;
+  const sdt = dt*sim.speed;
+  sim.t += sdt;
+  sim.phase = derivePhase(sim.t);
+
+  // --- RÝCHLOSŤ: cieľ z krivky + jemný šum, vyhladené ---
+  const vTarget = targetVelocity(sim.t);
+  const prevVel = sim.velocity;
+  sim.velocity = approach(sim.velocity, vTarget, 1.6, sdt);
+  sim.velocity = Math.max(0, sim.velocity + gauss(1.2)*Math.min(1,Math.abs(vTarget)/50));
+
+  // --- ZRÝCHLENIE: derivácia rýchlosti (v g) ---
+  const aInst = sdt>0 ? (sim.velocity-prevVel)/sdt : 0;
+  sim.accel = approach(sim.accel, aInst, 6, sdt);
+
+  // --- VÝŠKA: integrácia z vertikálnej zložky rýchlosti ---
+  // Hrubý profil stúpania: spočiatku takmer vertikálne, neskôr horizontálne (gravity turn).
+  let pitchFrac; // podiel rýchlosti smerujúci nahor
+  if(sim.t < 0)        pitchFrac = 0;
+  else if(sim.t < 12)  pitchFrac = 0.96;
+  else if(sim.t < 90)  pitchFrac = lerp(0.9,0.35,(sim.t-12)/78);
+  else if(sim.t < 240) pitchFrac = lerp(0.35,0.08,(sim.t-90)/150);
+  else                 pitchFrac = 0.04;
+  const vUp = sim.velocity*pitchFrac;     // m/s nahor
+  sim.altitude += (vUp/1000)*sdt;         // km
+  sim.altitude = clamp(sim.altitude, 0, 420);
+
+  // downrange (horizontálna vzdialenosť)
+  const vHoriz = sim.velocity*Math.sqrt(Math.max(0,1-pitchFrac*pitchFrac));
+  sim.downrange += (vHoriz/1000)*sdt;
+
+  // --- DYNAMICKÝ TLAK q = ½·ρ·v² , ρ klesá exponenciálne s výškou ---
+  const rho = 1.225*Math.exp(-sim.altitude/8.5);   // kg/m^3 (8.5 km mierka)
+  sim.dynPressure = 0.5*rho*sim.velocity*sim.velocity/1000; // kPa
+
+  // --- PALIVO ---
+  if(sim.t>0 && sim.t<150 && sim.fuelS1>0){
+    sim.fuelS1 = clamp(sim.fuelS1 - sdt*(100/150), 0, 100);
+  }
+  if(sim.t>=150 && sim.t<480 && sim.fuelS2>0){
+    sim.fuelS2 = clamp(sim.fuelS2 - sdt*(100/360), 0, 100);
+  }
+}
+
+/* ================================================================
+   (2) CHART COMPONENTS — reusable scrolling strip chart
+   ================================================================ */
+
+/* Továreň na rolujúci pásový graf (strip chart factory).
+   Drží kruhový buffer vzoriek a kreslí glow čiaru + gradientovú výplň. */
+function createStripChart(canvas, opts){
+  const o = Object.assign({
+    color:      '#36e0d4',
+    glow:       'rgba(54,224,212,0.9)',
+    fillTop:    'rgba(54,224,212,0.28)',
+    fillBottom: 'rgba(54,224,212,0.0)',
+    window:     120,     // viditeľné okno v sekundách
+    min:        0,
+    max:        100,
+    autoMax:    true,    // automatické škálovanie hornej hranice
+    yTicks:     4,
+  }, opts||{});
+
+  const ctx = canvas.getContext('2d');
+  const samples = [];     // {t, v}
+  let dpr = 1, W=0, H=0;
+
+  function resize(){
+    dpr = window.devicePixelRatio||1;
+    const r = canvas.getBoundingClientRect();
+    W = Math.max(1,Math.floor(r.width));
+    H = Math.max(1,Math.floor(r.height));
+    canvas.width = W*dpr; canvas.height = H*dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function push(t,v){
+    samples.push({t,v});
+    // odstráň vzorky mimo okna (+malá rezerva)
+    const cutoff = t - o.window - 2;
+    while(samples.length && samples[0].t < cutoff) samples.shift();
+  }
+
+  function draw(now){
+    ctx.clearRect(0,0,W,H);
+    const padL=8, padR=8, padT=10, padB=14;
+    const gw = W-padL-padR, gh = H-padT-padB;
+
+    // rozsah X = posledných `window` sekúnd
+    const tMax = now;
+    const tMin = now - o.window;
+
+    // dynamický rozsah Y
+    let vMax = o.max, vMin = o.min;
+    if(o.autoMax){
+      let mx = -Infinity;
+      for(const s of samples) if(s.t>=tMin) mx = Math.max(mx,s.v);
+      if(mx===-Infinity) mx = o.max;
+      // pekné zaokrúhlenie hornej hranice nahor
+      const head = mx*1.15 + 1e-6;
+      const mag = Math.pow(10,Math.floor(Math.log10(head)));
+      vMax = Math.ceil(head/mag)*mag;
+      vMax = Math.max(vMax, o.min + mag);
+    }
+
+    const xOf = t => padL + ((t-tMin)/(tMax-tMin))*gw;
+    const yOf = v => padT + (1-(v-vMin)/(vMax-vMin))*gh;
+
+    // --- mriežka (faint grid) ---
+    ctx.lineWidth=1;
+    ctx.strokeStyle='rgba(80,200,220,0.06)';
+    ctx.fillStyle='rgba(120,160,170,0.55)';
+    ctx.font='9px var(--mono, monospace)';
+    ctx.textBaseline='middle';
+    for(let i=0;i<=o.yTicks;i++){
+      const v = vMin + (vMax-vMin)*i/o.yTicks;
+      const y = yOf(v);
+      ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(W-padR,y);ctx.stroke();
+      ctx.fillText(formatTick(v), padL+2, y-6);
+    }
+    // vertikálne značky každých 20 s
+    for(let tt=Math.ceil(tMin/20)*20; tt<=tMax; tt+=20){
+      const x=xOf(tt);
+      ctx.beginPath();ctx.moveTo(x,padT);ctx.lineTo(x,H-padB);ctx.stroke();
+    }
+
+    // viditeľné vzorky
+    const vis = samples.filter(s=>s.t>=tMin-1);
+    if(vis.length>1){
+      // --- gradientová výplň (gradient fill) ---
+      const grad = ctx.createLinearGradient(0,padT,0,padT+gh);
+      grad.addColorStop(0,o.fillTop);
+      grad.addColorStop(1,o.fillBottom);
+      ctx.beginPath();
+      ctx.moveTo(xOf(vis[0].t), yOf(vis[0].v));
+      for(let i=1;i<vis.length;i++) ctx.lineTo(xOf(vis[i].t), yOf(vis[i].v));
+      ctx.lineTo(xOf(vis[vis.length-1].t), padT+gh);
+      ctx.lineTo(xOf(vis[0].t), padT+gh);
+      ctx.closePath();
+      ctx.fillStyle=grad; ctx.fill();
+
+      // --- glow čiara (layered glow stroke) ---
+      ctx.lineJoin='round'; ctx.lineCap='round';
+      ctx.shadowColor=o.glow; ctx.shadowBlur=12;
+      ctx.strokeStyle=o.color; ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(xOf(vis[0].t), yOf(vis[0].v));
+      for(let i=1;i<vis.length;i++) ctx.lineTo(xOf(vis[i].t), yOf(vis[i].v));
+      ctx.stroke();
+      ctx.shadowBlur=0;
+
+      // koncový bod (leading dot)
+      const last=vis[vis.length-1];
+      ctx.fillStyle='#eafcff';
+      ctx.beginPath();ctx.arc(xOf(last.t),yOf(last.v),3,0,Math.PI*2);ctx.fill();
+      ctx.shadowColor=o.glow;ctx.shadowBlur=14;
+      ctx.beginPath();ctx.arc(xOf(last.t),yOf(last.v),3,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;
+    }
+  }
+
+  function formatTick(v){
+    if(o.max>=1000||v>=1000) return (v/1000).toFixed(v>=1000?1:0)+'k';
+    if(Math.abs(v)<10) return v.toFixed(1);
+    return Math.round(v).toString();
+  }
+
+  resize();
+  return {push, draw, resize, samples};
+}
+
+/* ================================================================
+   (3) PANELS / RENDER
+   ================================================================ */
+const altChart = createStripChart(document.getElementById('altChart'),{
+  color:'#36e0d4', glow:'rgba(54,224,212,0.9)',
+  fillTop:'rgba(54,224,212,0.26)', fillBottom:'rgba(54,224,212,0)',
+  min:0, max:10, autoMax:true,
+});
+const velChart = createStripChart(document.getElementById('velChart'),{
+  color:'#7aa2ff', glow:'rgba(122,162,255,0.9)',
+  fillTop:'rgba(122,162,255,0.24)', fillBottom:'rgba(122,162,255,0)',
+  min:0, max:1000, autoMax:true,
+});
+
+/* Plynulo interpolované zobrazené čísla (display interpolation) so they
+   never sit perfectly still – drobné tikanie udržuje "živý" pocit. */
+const disp = {alt:0, vel:0, acc:0, dr:0, q:0, fuel:100};
+
+/* Formátovanie misijného času T±HH:MM:SS (mission clock formatting) */
+function fmtClock(t){
+  const sign = t<0?'-':'+';
+  const a = Math.abs(t);
+  const h = Math.floor(a/3600);
+  const m = Math.floor((a%3600)/60);
+  const s = Math.floor(a%60);
+  const p = n=>String(n).padStart(2,'0');
+  return `T${sign}${p(h)}:${p(m)}:${p(s)}`;
+}
+
+const phasePill   = document.getElementById('phasePill');
+const phaseSub    = document.getElementById('phaseSub');
+const missionClock= document.getElementById('missionClock');
+const utcClock    = document.getElementById('utcClock');
+
+function renderHUD(){
+  // vyhladené zobrazené hodnoty
+  disp.alt = lerp(disp.alt, sim.altitude, 0.18);
+  disp.vel = lerp(disp.vel, sim.velocity, 0.18);
+  disp.acc = lerp(disp.acc, sim.accel/9.80665, 0.18);
+  disp.dr  = lerp(disp.dr,  sim.downrange, 0.18);
+  disp.q   = lerp(disp.q,   sim.dynPressure, 0.18);
+  disp.fuel= lerp(disp.fuel,sim.fuelS1, 0.2);
+
+  document.getElementById('altRead').textContent = disp.alt.toFixed(1);
+  document.getElementById('velRead').textContent = Math.round(disp.vel).toLocaleString();
+  document.getElementById('iAlt').textContent = disp.alt.toFixed(1);
+  document.getElementById('iVel').textContent = Math.round(disp.vel).toLocaleString();
+  document.getElementById('iAcc').textContent = disp.acc.toFixed(2);
+  document.getElementById('iDr').textContent  = disp.dr.toFixed(1);
+  document.getElementById('iQ').textContent   = disp.q.toFixed(1);
+  document.getElementById('iFuel').textContent= Math.round(disp.fuel);
+
+  // fáza
+  const ph = PHASES.find(p=>p.key===sim.phase)||PHASES[0];
+  if(phasePill.textContent!==sim.phase){
+    phasePill.textContent=sim.phase;
+    phaseSub.textContent=ph.sub;
+  }
+  missionClock.textContent = fmtClock(sim.t);
+
+  const now=new Date();
+  utcClock.textContent = now.toISOString().substr(11,8);
+}
+
+/* ================================================================
+   (4) UI / MAIN LOOP
+   ================================================================ */
+let lastTs = performance.now();
+let acc60 = 0;   // akumulátor pre vkladanie vzoriek (sampling accumulator)
+
+function frame(ts){
+  const dt = Math.min(0.1,(ts-lastTs)/1000);
+  lastTs = ts;
+
+  stepSim(dt);
+
+  // vkladaj vzorky do grafov ~10×/s simulačného času
+  acc60 += dt*sim.speed;
+  if(acc60 >= 0.1){
+    acc60 = 0;
+    altChart.push(sim.t, sim.altitude);
+    velChart.push(sim.t, sim.velocity);
+  }
+
+  altChart.draw(sim.t);
+  velChart.draw(sim.t);
+  renderHUD();
+
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', ()=>{
+  altChart.resize(); velChart.resize();
+});
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
